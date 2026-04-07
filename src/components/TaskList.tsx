@@ -1,0 +1,313 @@
+import React, { useState, useEffect } from 'react';
+import { api } from '../api';
+import { MaintenanceTask, TaskStatus } from '../types';
+import { 
+  CheckCircle2, 
+  Clock, 
+  AlertCircle, 
+  Trash2, 
+  Calendar as CalendarIcon,
+  Search,
+  Wrench,
+  Zap,
+  Droplets,
+  Brush,
+  ShieldCheck,
+  Settings,
+  Timer,
+  MapPin,
+  Phone,
+  Bell,
+  Loader2
+} from 'lucide-react';
+import { format, addDays, addWeeks, addMonths, addYears } from 'date-fns';
+import { cn } from '../lib/utils';
+import { motion, AnimatePresence } from 'motion/react';
+import { toast } from 'sonner';
+
+export const TaskList: React.FC = () => {
+  const [tasks, setTasks] = useState<MaintenanceTask[]>([]);
+  const [loading, setLoading] = useState(true);
+  const [filter, setFilter] = useState<TaskStatus | 'all'>('all');
+  const [search, setSearch] = useState('');
+  const [taskToDelete, setTaskToDelete] = useState<MaintenanceTask | null>(null);
+  const [isDeleting, setIsDeleting] = useState(false);
+
+  const fetchTasks = async () => {
+    try {
+      const data = await api.tasks.list();
+      setTasks(Array.isArray(data) ? data : []);
+    } catch (error) {
+      console.error("Error fetching tasks:", error);
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  useEffect(() => {
+    fetchTasks();
+  }, []);
+
+  const handleComplete = async (task: MaintenanceTask) => {
+    if (!task.id) return;
+
+    const now = new Date();
+    let nextDue = new Date(task.nextDue);
+
+    // Calculate next due date based on frequency
+    switch (task.frequency) {
+      case 'daily': nextDue = addDays(now, 1); break;
+      case 'weekly': nextDue = addWeeks(now, 1); break;
+      case 'monthly': nextDue = addMonths(now, 1); break;
+      case 'yearly': nextDue = addYears(now, 1); break;
+      case 'one-time': 
+        await api.tasks.update(task.id, { status: 'completed' });
+        break;
+    }
+
+    try {
+      if (task.frequency !== 'one-time') {
+        await api.tasks.update(task.id, {
+          lastDone: now.toISOString(),
+          nextDue: nextDue.toISOString(),
+          status: 'pending'
+        });
+      }
+
+      // Add to history
+      await api.history.create({
+        taskId: task.id,
+        taskTitle: task.title,
+        completedAt: now.toISOString(),
+        notes: `Completed as scheduled (${task.frequency})`
+      });
+      
+      toast.success(`"${task.title}" marked as completed!`);
+      fetchTasks();
+    } catch (error: any) {
+      toast.error(error.message);
+    }
+  };
+
+  const confirmDelete = async () => {
+    if (!taskToDelete?.id) return;
+    
+    setIsDeleting(true);
+    try {
+      await api.tasks.delete(taskToDelete.id);
+      toast.success('Task deleted');
+      setTaskToDelete(null);
+      fetchTasks();
+    } catch (error: any) {
+      toast.error(error.message);
+    } finally {
+      setIsDeleting(false);
+    }
+  };
+
+  const filteredTasks = tasks.filter(t => {
+    const matchesFilter = filter === 'all' || t.status === filter;
+    const matchesSearch = t.title.toLowerCase().includes(search.toLowerCase()) || 
+                         t.category.toLowerCase().includes(search.toLowerCase()) ||
+                         (t.address?.toLowerCase() || '').includes(search.toLowerCase());
+    return matchesFilter && matchesSearch;
+  });
+
+  const getCategoryIcon = (category: string) => {
+    switch (category) {
+      case 'structural': return <Wrench className="w-4 h-4" />;
+      case 'electrical': return <Zap className="w-4 h-4" />;
+      case 'plumbing': return <Droplets className="w-4 h-4" />;
+      case 'cleaning': return <Brush className="w-4 h-4" />;
+      case 'safety': return <ShieldCheck className="w-4 h-4" />;
+      default: return <Settings className="w-4 h-4" />;
+    }
+  };
+
+  if (loading) return <div className="p-8 text-center text-zinc-500">Loading tasks...</div>;
+
+  return (
+    <div className="space-y-6 animate-in fade-in duration-500">
+      <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
+        <h2 className="text-2xl font-bold text-zinc-900">Maintenance Tasks</h2>
+        <div className="flex items-center gap-2">
+          <div className="relative flex-1 sm:w-64">
+            <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-zinc-400" />
+            <input
+              type="text"
+              placeholder="Search tasks..."
+              value={search}
+              onChange={(e) => setSearch(e.target.value)}
+              className="w-full pl-10 pr-4 py-2 bg-white border border-zinc-200 rounded-xl text-sm focus:outline-none focus:ring-2 focus:ring-zinc-900/10 focus:border-zinc-900 transition-all"
+            />
+          </div>
+          <select
+            value={filter}
+            onChange={(e) => setFilter(e.target.value as any)}
+            className="px-3 py-2 bg-white border border-zinc-200 rounded-xl text-sm focus:outline-none font-medium"
+          >
+            <option value="all">All Status</option>
+            <option value="pending">Pending</option>
+            <option value="urgent">Urgent</option>
+            <option value="completed">Completed</option>
+          </select>
+        </div>
+      </div>
+
+      <div className="grid gap-4">
+        <AnimatePresence mode="popLayout">
+          {filteredTasks.map((task) => (
+            <motion.div
+              key={task.id}
+              layout
+              initial={{ opacity: 0, scale: 0.95 }}
+              animate={{ opacity: 1, scale: 1 }}
+              exit={{ opacity: 0, scale: 0.95 }}
+              className="group p-5 bg-white border border-zinc-200 rounded-3xl shadow-sm hover:shadow-md transition-all"
+            >
+              <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
+                <div className="flex items-start gap-4">
+                  <div className={cn(
+                    "p-3.5 rounded-2xl",
+                    task.status === 'urgent' ? "bg-red-50 text-red-600" : "bg-zinc-50 text-zinc-500"
+                  )}>
+                    {getCategoryIcon(task.category)}
+                  </div>
+                  <div>
+                    <h3 className="font-bold text-zinc-900 text-lg">{task.title}</h3>
+                    <p className="text-sm text-zinc-500 mt-0.5">{task.description || 'No description provided.'}</p>
+                    
+                    {(task.address || task.contactDetails) && (
+                      <div className="flex flex-wrap gap-4 mt-2">
+                        {task.address && (
+                          <div className="flex items-center gap-1.5 text-xs text-zinc-500">
+                            <MapPin className="w-3.5 h-3.5 text-zinc-400" />
+                            {task.address}
+                          </div>
+                        )}
+                        {task.contactDetails && (
+                          <div className="flex items-center gap-1.5 text-xs text-zinc-500">
+                            <Phone className="w-3.5 h-3.5 text-zinc-400" />
+                            {task.contactDetails}
+                          </div>
+                        )}
+                      </div>
+                    )}
+
+                    <div className="flex flex-wrap items-center gap-3 mt-3">
+                      <span className={cn(
+                        "px-2.5 py-1 rounded-full text-[10px] font-bold uppercase tracking-wider flex items-center gap-1.5",
+                        task.status === 'urgent' ? "bg-red-100 text-red-700" : 
+                        task.status === 'completed' ? "bg-emerald-100 text-emerald-700" : 
+                        "bg-zinc-100 text-zinc-600"
+                      )}>
+                        {task.status === 'urgent' && <AlertCircle className="w-3 h-3" />}
+                        {task.status === 'completed' && <CheckCircle2 className="w-3 h-3" />}
+                        {task.status === 'pending' && <Clock className="w-3 h-3" />}
+                        {task.status}
+                      </span>
+                      <span className="text-xs font-medium text-zinc-400 flex items-center gap-1.5">
+                        <CalendarIcon className="w-3.5 h-3.5" />
+                        Next: {format(new Date(task.nextDue), 'MMM d, yyyy')}
+                      </span>
+                      <span className="text-xs font-medium text-zinc-400 flex items-center gap-1.5">
+                        <Clock className="w-3.5 h-3.5" />
+                        {task.frequency}
+                      </span>
+                      {task.expiryTime && (
+                        <span className="text-xs font-medium text-amber-600 bg-amber-50 px-2 py-0.5 rounded-md flex items-center gap-1.5">
+                          <Timer className="w-3.5 h-3.5" />
+                          Expires: {task.expiryTime}
+                        </span>
+                      )}
+                      {task.reminderTiers && task.reminderTiers.length > 0 && (
+                        <span className="text-xs font-medium text-blue-600 bg-blue-50 px-2 py-0.5 rounded-md flex items-center gap-1.5" title="Reminders set">
+                          <Bell className="w-3.5 h-3.5" />
+                          Reminders: {task.reminderTiers.join(', ')}d
+                        </span>
+                      )}
+                    </div>
+                  </div>
+                </div>
+
+                <div className="flex items-center gap-2 self-end sm:self-center">
+                  {task.status !== 'completed' && (
+                    <button
+                      onClick={() => handleComplete(task)}
+                      className="flex items-center gap-2 px-4 py-2 bg-emerald-50 text-emerald-600 rounded-xl hover:bg-emerald-100 transition-all text-sm font-bold"
+                    >
+                      <CheckCircle2 className="w-4 h-4" />
+                      Mark Done
+                    </button>
+                  )}
+                  <button
+                    onClick={() => setTaskToDelete(task)}
+                    className="p-2.5 text-zinc-300 hover:text-red-500 transition-colors rounded-xl hover:bg-red-50"
+                  >
+                    <Trash2 className="w-5 h-5" />
+                  </button>
+                </div>
+              </div>
+            </motion.div>
+          ))}
+        </AnimatePresence>
+
+        {filteredTasks.length === 0 && (
+          <div className="p-12 border-2 border-dashed border-zinc-200 rounded-3xl text-center">
+            <div className="inline-flex p-4 bg-zinc-50 rounded-full mb-4">
+              <Search className="w-8 h-8 text-zinc-300" />
+            </div>
+            <h3 className="text-lg font-bold text-zinc-900">No tasks found</h3>
+            <p className="text-zinc-500 text-sm mt-1">Try adjusting your filters or search terms.</p>
+          </div>
+        )}
+      </div>
+
+      {/* Delete Confirmation Modal */}
+      <AnimatePresence>
+        {taskToDelete && (
+          <div className="fixed inset-0 bg-zinc-900/40 backdrop-blur-sm z-50 flex items-center justify-center p-4 animate-in fade-in duration-300">
+            <motion.div 
+              initial={{ opacity: 0, scale: 0.95 }}
+              animate={{ opacity: 1, scale: 1 }}
+              exit={{ opacity: 0, scale: 0.95 }}
+              className="bg-white w-full max-w-md rounded-3xl shadow-2xl p-8 space-y-6"
+            >
+              <div className="text-center space-y-4">
+                <div className="w-16 h-16 bg-red-50 text-red-600 rounded-2xl flex items-center justify-center mx-auto">
+                  <Trash2 className="w-8 h-8" />
+                </div>
+                <div>
+                  <h3 className="text-xl font-bold text-zinc-900">Delete Task?</h3>
+                  <p className="text-zinc-500 mt-2">
+                    Are you sure you want to delete <span className="font-bold text-zinc-900">"{taskToDelete.title}"</span>? This action cannot be undone.
+                  </p>
+                </div>
+              </div>
+
+              <div className="flex gap-3">
+                <button
+                  onClick={() => setTaskToDelete(null)}
+                  className="flex-1 py-3 bg-zinc-100 text-zinc-900 rounded-xl font-bold hover:bg-zinc-200 transition-all"
+                >
+                  Cancel
+                </button>
+                <button
+                  disabled={isDeleting}
+                  onClick={confirmDelete}
+                  className="flex-1 py-3 bg-red-600 text-white rounded-xl font-bold hover:bg-red-700 transition-all flex items-center justify-center gap-2 disabled:opacity-50"
+                >
+                  {isDeleting ? (
+                    <Loader2 className="w-4 h-4 animate-spin" />
+                  ) : (
+                    'Delete Task'
+                  )}
+                </button>
+              </div>
+            </motion.div>
+          </div>
+        )}
+      </AnimatePresence>
+    </div>
+  );
+};
